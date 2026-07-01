@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LRT Fleet Status</title>
+    <meta http-equiv="refresh" content="5">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <main class="page">
+        <header class="topbar">
+            <div>
+                <p class="eyebrow">Singapore RailTech Demo</p>
+                <h1>LRT Fleet Status</h1>
+                <p class="subtitle">Hubometer ID and mileage-based preventive maintenance overview</p>
+            </div>
+            <div class="updated-box">
+                <span class="updated-label">Updated</span>
+                <strong>Auto refresh: 5 sec</strong>
+            </div>
+        </header>
+
+        <section class="rules-banner">
+            <p>
+                <strong>PM rules:</strong>
+                Milestones at 2K, 13K, 40K, 120K, and 360K km.
+                <span class="rules-sep">|</span>
+                <strong>Demo IDs</strong> = 650-0610 to 650-0614.
+                <span class="rules-sep">|</span>
+                <strong>Due Soon</strong> = within {{ "{:,}".format(pm_warning_km) }} km of next milestone.
+                <span class="rules-sep">|</span>
+                <strong>Overdue</strong> = passed a milestone without service reset (within {{ "{:,}".format(pm_warning_km) }} km grace).
+            </p>
+        </section>
+
+        {% set ok_count = trains | selectattr('status', 'equalto', 'OK') | list | length %}
+        {% set due_soon_count = trains | selectattr('status', 'equalto', 'Due Soon') | list | length %}
+        {% set overdue_count = trains | selectattr('status', 'equalto', 'Overdue') | list | length %}
+        {% set attention_trains = trains | selectattr('status', 'ne', 'OK') | list %}
+
+        <section class="summary-grid">
+            <article class="summary-card">
+                <span class="summary-label">Total Trains</span>
+                <strong>{{ trains|length }}</strong>
+            </article>
+
+            <article class="summary-card summary-ok">
+                <span class="summary-label">OK</span>
+                <strong>{{ ok_count }}</strong>
+                <span class="summary-hint">More than {{ "{:,}".format(pm_warning_km) }} km from next PM</span>
+            </article>
+
+            <article class="summary-card summary-due">
+                <span class="summary-label">Due Soon</span>
+                <strong>{{ due_soon_count }}</strong>
+                <span class="summary-hint">Within {{ "{:,}".format(pm_warning_km) }} km of next PM</span>
+            </article>
+
+            <article class="summary-card summary-overdue">
+                <span class="summary-label">Overdue</span>
+                <strong>{{ overdue_count }}</strong>
+                <span class="summary-hint">Past PM milestone — service required</span>
+            </article>
+        </section>
+
+        <section class="maintenance-panel {% if attention_trains %}maintenance-panel--alert{% endif %}">
+            <div class="panel-card maintenance-card">
+                <div class="panel-head">
+                    <div>
+                        <h2>Maintenance Due Status</h2>
+                        <p class="panel-subtitle">Sorted by urgency — overdue first, then due soon</p>
+                    </div>
+                    {% if attention_trains %}
+                    <span class="maintenance-count-badge">{{ attention_trains|length }} need action</span>
+                    {% else %}
+                    <span class="maintenance-count-badge maintenance-count-badge--clear">All clear</span>
+                    {% endif %}
+                </div>
+
+                {% if attention_trains %}
+                <div class="maintenance-alert-grid">
+                    {% for train in attention_trains %}
+                    <article class="maintenance-alert {{ train.color }}">
+                        <div class="maintenance-alert-top">
+                            <div>
+                                <p class="train-label">Hubometer ID</p>
+                                <h3>{{ train.train_id }}</h3>
+                            </div>
+                            <span class="status-badge {{ train.color }}">
+                                <span class="dot"></span>
+                                {{ train.status }}
+                            </span>
+                        </div>
+
+                        <p class="action-line">{{ train.action_message }}</p>
+
+                        <div class="maintenance-metric">
+                            {% if train.status == 'Overdue' %}
+                            <span class="maintenance-metric-value overdue">Overdue by {{ train.overdue_by_km }} km</span>
+                            <span class="maintenance-metric-label">{{ train.pm_target }} km PM milestone</span>
+                            {% else %}
+                            <span class="maintenance-metric-value due-soon">{{ train.distance_remaining }} km</span>
+                            <span class="maintenance-metric-label">remaining to {{ train.next_pm }} km milestone</span>
+                            {% endif %}
+                        </div>
+
+                        <div class="maintenance-detail-row">
+                            <div>
+                                <span class="meta-label">Current mileage</span>
+                                <strong>{{ train.total_distance }} km</strong>
+                            </div>
+                            <div>
+                                <span class="meta-label">Next PM milestone</span>
+                                <strong>{{ train.next_pm }} km</strong>
+                            </div>
+                        </div>
+                    </article>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="maintenance-clear-state">
+                    <span class="maintenance-clear-icon">✓</span>
+                    <p><strong>All trains are within safe PM margins.</strong></p>
+                    <p class="maintenance-clear-detail">No train is within {{ "{:,}".format(pm_warning_km) }} km of its next preventive maintenance milestone.</p>
+                </div>
+                {% endif %}
+            </div>
+        </section>
+
+        <section class="live-panel">
+            <div class="panel-card">
+                <div class="panel-head">
+                    <h2>Live Scan Status</h2>
+                    <span class="live-dot"></span>
+                </div>
+
+                {% if latest_scan %}
+                <div class="live-grid">
+                    <div><span class="meta-label">Last Scan Hubometer ID</span><strong>{{ latest_scan.train_id }}</strong></div>
+                    <div><span class="meta-label">Scanned Mileage</span><strong>{{ latest_scan.scanned_mileage }}</strong></div>
+                    <div><span class="meta-label">Result</span><strong>{{ latest_scan.result }}</strong></div>
+                    <div><span class="meta-label">Time</span><strong>{{ latest_scan.timestamp }}</strong></div>
+                </div>
+                <p class="live-reason">{{ latest_scan.reason }}</p>
+                {% else %}
+                <p>No scan data yet.</p>
+                {% endif %}
+            </div>
+        </section>
+
+        <section class="card-grid">
+            {% for train in trains %}
+            <article class="train-card status-{{ train.color }}">
+                <div class="card-top">
+                    <div>
+                        <p class="train-label">Hubometer ID</p>
+                        <h2>{{ train.train_id }}</h2>
+                    </div>
+                    <div class="card-badges">
+                        <span class="status-badge {{ train.color }}">
+                            <span class="dot"></span>
+                            {{ train.status }}
+                        </span>
+                        <span class="serviceability-badge serviceability-{{ train.serviceability | lower | replace(' ', '-') }}">
+                            {{ train.serviceability }}
+                        </span>
+                    </div>
+                </div>
+
+                <p class="action-line card-action-line">{{ train.action_message }}</p>
+
+                <div class="pm-progress train-pm-progress">
+                    <div class="pm-progress-header">
+                        <span class="meta-label">Mileage vs next milestone</span>
+                        <strong>{{ train.total_distance }} / {{ train.next_pm }} km</strong>
+                    </div>
+                    <div class="pm-progress-track">
+                        <div class="pm-progress-fill {{ train.color }}" style="width: {{ train.progress_pct }}%"></div>
+                    </div>
+                    <span class="pm-progress-caption">{{ train.distance_display }}</span>
+                </div>
+
+                <div class="meta-grid">
+                    <div class="meta-item">
+                        <span class="meta-label">Current mileage</span>
+                        <strong>{{ train.total_distance }} km</strong>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">Next PM milestone</span>
+                        <strong>{{ train.next_pm }} km</strong>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">PM target / overdue</span>
+                        <strong>{{ train.distance_display }}</strong>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">Last updated</span>
+                        <strong>{{ train.last_updated }}</strong>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">OCR confidence</span>
+                        <strong>
+                            {% if train.ocr_confidence is not none %}
+                            {{ (train.ocr_confidence * 100) | round(0) }}%
+                            {% else %}
+                            —
+                            {% endif %}
+                        </strong>
+                    </div>
+                </div>
+
+                <div class="milestone-block">
+                    <p class="milestone-title">PM milestone timeline</p>
+                    <p class="milestone-legend">
+                        <span class="legend-item legend-completed">Completed</span>
+                        <span class="legend-item legend-current">Current target</span>
+                        <span class="legend-item legend-overdue">Overdue</span>
+                        <span class="legend-item legend-future">Future</span>
+                    </p>
+                    <div class="milestone-row">
+                        {% for item in train.checklist %}
+                        <span class="milestone-chip {{ item.state }}">
+                            {% if item.state == 'completed' %}✓{% elif item.state == 'overdue' %}!{% elif item.state == 'current' %}→{% else %}○{% endif %}
+                            {{ item.label }}
+                        </span>
+                        {% endfor %}
+                    </div>
+                </div>
+            </article>
+            {% endfor %}
+        </section>
+
+        <section class="history-section">
+            <div class="panel-card">
+                <div class="panel-head">
+                    <h2>Recent Scan History</h2>
+                </div>
+
+                {% if history %}
+                <div class="history-table-wrap">
+                    <table class="history-table">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Train</th>
+                                <th>Scanned</th>
+                                <th>Previous</th>
+                                <th>Result</th>
+                                <th>Reason</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in history %}
+                            <tr>
+                                <td>{{ item.timestamp }}</td>
+                                <td>{{ item.train_id }}</td>
+                                <td>{{ item.scanned_mileage }}</td>
+                                <td>{{ item.previous_mileage if item.previous_mileage is not none else '-' }}</td>
+                                <td>{{ item.result }}</td>
+                                <td>{{ item.reason }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p>No history yet.</p>
+                {% endif %}
+            </div>
+        </section>
+    </main>
+</body>
+</html>

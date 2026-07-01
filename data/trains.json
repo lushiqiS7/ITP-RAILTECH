@@ -1,0 +1,37 @@
+[
+  {
+    "train_id": "650-0610",
+    "model": "2-Car LRV",
+    "total_distance": 45800,
+    "last_updated": "2026-07-01 11:57:16",
+    "ocr_confidence": 0.94
+  },
+  {
+    "train_id": "650-0611",
+    "model": "2-Car LRV",
+    "total_distance": 5800,
+    "last_updated": "2026-07-01 11:58:02",
+    "ocr_confidence": 0.91
+  },
+  {
+    "train_id": "650-0612",
+    "model": "2-Car LRV",
+    "total_distance": 200,
+    "last_updated": "2026-07-01 11:59:19",
+    "ocr_confidence": 0.88
+  },
+  {
+    "train_id": "650-0613",
+    "model": "2-Car LRV",
+    "total_distance": 500,
+    "last_updated": "2026-06-25 10:00:00",
+    "ocr_confidence": 0.72
+  },
+  {
+    "train_id": "650-0614",
+    "model": "2-Car LRV",
+    "total_distance": 41000,
+    "last_updated": "2026-06-25 10:00:00",
+    "ocr_confidence": 0.75
+  }
+]
