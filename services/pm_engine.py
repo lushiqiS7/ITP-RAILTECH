@@ -1,8 +1,22 @@
 from config import PM_CYCLES, DUE_SOON_THRESHOLD
 
 
+def sync_milestones_for_mileage(completed_milestones, current_mileage):
+    """Drop completed milestones the train has not physically reached."""
+    return sorted(m for m in completed_milestones if m <= current_mileage)
+
+
+def get_next_pm_by_mileage(current_mileage):
+    """Return the next PM milestone threshold based on current mileage."""
+    for cycle in PM_CYCLES:
+        if current_mileage < cycle:
+            return cycle
+    cycles_beyond = current_mileage // 360000
+    return 360000 * (cycles_beyond + 1)
+
+
 def get_next_pm_milestone(completed_milestones, current_mileage):
-    """Return the next uncompleted PM milestone."""
+    """Return the next uncompleted PM milestone for maintenance workflows."""
     for cycle in PM_CYCLES:
         if cycle not in completed_milestones:
             return cycle
@@ -45,10 +59,10 @@ def get_next_action(status, next_pm, needs_review, scan_validity):
 
 
 def build_milestone_timeline(completed_milestones, current_mileage, next_pm):
-    """Build milestone chips with completed/current/future states."""
+    """Build milestone chips with completed/current/future states based on mileage."""
     timeline = []
     for cycle in PM_CYCLES:
-        if cycle in completed_milestones:
+        if current_mileage >= cycle:
             state = "completed"
         elif cycle == next_pm:
             state = "current"
@@ -58,7 +72,7 @@ def build_milestone_timeline(completed_milestones, current_mileage, next_pm):
             "value": cycle,
             "label": _format_milestone_label(cycle),
             "state": state,
-            "done": cycle in completed_milestones,
+            "done": current_mileage >= cycle,
         })
     return timeline
 
@@ -72,8 +86,10 @@ def _format_milestone_label(value):
 def enrich_train(train):
     """Enrich a raw train record with computed PM fields."""
     current_mileage = train.get("current_mileage", train.get("total_distance", 0))
-    completed = train.get("completed_milestones", [])
-    next_pm = get_next_pm_milestone(completed, current_mileage)
+    completed = sync_milestones_for_mileage(
+        train.get("completed_milestones", []), current_mileage,
+    )
+    next_pm = get_next_pm_by_mileage(current_mileage)
     status, color, distance = calculate_pm_status(current_mileage, next_pm)
     needs_review = train.get("needs_manual_review", False)
     scan_validity = train.get("scan_validity", "Valid")

@@ -3,7 +3,9 @@ from config import (
     OCR_CONFIDENCE_THRESHOLD, QR_CONFIDENCE_THRESHOLD,
 )
 from services.data_store import load_json, save_json, now_str, new_id
-from services.pm_engine import enrich_train, complete_maintenance, get_next_pm_milestone
+from services.pm_engine import (
+    enrich_train, complete_maintenance, get_next_pm_milestone, sync_milestones_for_mileage,
+)
 from services.audit_service import log_audit
 
 
@@ -119,8 +121,14 @@ def manual_edit_train(train_id, field, new_value, reason, user_id, user_role):
             continue
         old_value = train.get(field)
         if field in ("current_mileage", "total_distance"):
-            train["current_mileage"] = int(new_value)
-            train["total_distance"] = int(new_value)
+            new_mileage = int(new_value)
+            train["current_mileage"] = new_mileage
+            train["total_distance"] = new_mileage
+            synced = sync_milestones_for_mileage(
+                train.get("completed_milestones", []), new_mileage,
+            )
+            train["completed_milestones"] = synced
+            train["last_pm_completed"] = synced[-1] if synced else None
             field = "current_mileage"
         elif field == "serviceability_status":
             train["serviceability_status"] = new_value
