@@ -9,193 +9,6 @@ let useServerOcr = false;
 
 const SCAN_INTERVAL_MS = 2000;
 
-// Match utils/ocr_preprocessing.py ROI sizing
-const ROI_Y_OFFSET = 8;
-const ROI_HEIGHT_RATIO = 0.55;
-const ROI_HEIGHT_MIN = 40;
-const ROI_HEIGHT_MAX = 75;
-const ROI_X_PAD_RATIO = 0.40;
-const ROI_X_PAD_MIN = 55;
-
-function computeMileageRoi(qrLeft, qrTop, qrWidth, qrHeight, frameW, frameH) {
-    const xPad = Math.max(ROI_X_PAD_MIN, Math.round(qrWidth * ROI_X_PAD_RATIO));
-    const roiH = Math.max(
-        ROI_HEIGHT_MIN,
-        Math.min(ROI_HEIGHT_MAX, Math.round(qrHeight * ROI_HEIGHT_RATIO))
-    );
-    const qrBottom = qrTop + qrHeight;
-    const x1 = Math.max(qrLeft - xPad, 0);
-    const x2 = Math.min(qrLeft + qrWidth + xPad, frameW);
-    const y1 = Math.min(qrBottom + ROI_Y_OFFSET, frameH - 1);
-    const y2 = Math.min(y1 + roiH, frameH);
-    return { x1, y1, x2, y2 };
-}
-
-function toGrayscale(imageData) {
-    const { width, height, data } = imageData;
-    const gray = new Uint8ClampedArray(width * height);
-    for (let i = 0; i < width * height; i++) {
-        const idx = i * 4;
-        gray[i] = Math.round(0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2]);
-    }
-    return { width, height, gray };
-}
-
-function stretchContrast(gray, width, height) {
-    let min = 255;
-    let max = 0;
-    for (let i = 0; i < gray.length; i++) {
-        if (gray[i] < min) min = gray[i];
-        if (gray[i] > max) max = gray[i];
-    }
-    const range = max - min || 1;
-    const out = new Uint8ClampedArray(gray.length);
-    for (let i = 0; i < gray.length; i++) {
-        out[i] = Math.round(((gray[i] - min) / range) * 255);
-    }
-    return out;
-}
-
-function otsuThreshold(gray) {
-    const hist = new Array(256).fill(0);
-    for (let i = 0; i < gray.length; i++) hist[gray[i]]++;
-
-    let sum = 0;
-    for (let i = 0; i < 256; i++) sum += i * hist[i];
-    let sumB = 0;
-    let wB = 0;
-    let wF = 0;
-    let maxVar = 0;
-    let threshold = 127;
-    const total = gray.length;
-
-    for (let t = 0; t < 256; t++) {
-        wB += hist[t];
-        if (!wB) continue;
-        wF = total - wB;
-        if (!wF) break;
-        sumB += t * hist[t];
-        const mB = sumB / wB;
-        const mF = (sum - sumB) / wF;
-        const varBetween = wB * wF * (mB - mF) * (mB - mF);
-        if (varBetween > maxVar) {
-            maxVar = varBetween;
-            threshold = t;
-        }
-    }
-
-    const binary = new Uint8ClampedArray(gray.length);
-    for (let i = 0; i < gray.length; i++) {
-        binary[i] = gray[i] > threshold ? 255 : 0;
-    }
-    return binary;
-}
-
-function cropDigitBand(gray, width, height) {
-    const rowDensity = new Float32Array(height);
-    for (let y = 0; y < height; y++) {
-        let dark = 0;
-        for (let x = 0; x < width; x++) {
-            if (gray[y * width + x] < 128) dark++;
-        }
-        rowDensity[y] = dark;
-    }
-
-    let peakRow = 0;
-    let peakVal = 0;
-    for (let y = 0; y < height; y++) {
-        if (rowDensity[y] > peakVal) {
-            peakVal = rowDensity[y];
-            peakRow = y;
-        }
-    }
-    if (peakVal <= 0) return { gray, width, height, yOffset: 0 };
-
-    const cutoff = peakVal * 0.45;
-    let y1 = peakRow;
-    let y2 = peakRow;
-    while (y1 > 0 && rowDensity[y1 - 1] >= cutoff) y1--;
-    while (y2 < height - 1 && rowDensity[y2 + 1] >= cutoff) y2++;
-
-    y1 = Math.max(y1 - 2, 0);
-    y2 = Math.min(y2 + 3, height);
-    const bandH = y2 - y1;
-    if (bandH < 8) return { gray, width, height, yOffset: 0 };
-
-    const band = new Uint8ClampedArray(width * bandH);
-    for (let y = 0; y < bandH; y++) {
-        band.set(gray.subarray((y1 + y) * width, (y1 + y + 1) * width), y * width);
-    }
-    return { gray: band, width, height: bandH, yOffset: y1 };
-}
-
-function preprocessForOcr(imageData) {
-    const { width, height, gray: rawGray } = toGrayscale(imageData);
-    const stretched = stretchContrast(rawGray, width, height);
-    const band = cropDigitBand(stretched, width, height);
-    const scale = 4;
-    const sw = band.width * scale;
-    const sh = band.height * scale;
-
-    const canvas = document.createElement("canvas");
-    canvas.width = sw;
-    canvas.height = sh;
-    const ctx = canvas.getContext("2d");
-    const temp = document.createElement("canvas");
-    temp.width = band.width;
-    temp.height = band.height;
-    const tempCtx = temp.getContext("2d");
-    const tempData = tempCtx.createImageData(band.width, band.height);
-    for (let i = 0; i < band.gray.length; i++) {
-        const v = band.gray[i];
-        const idx = i * 4;
-        tempData.data[idx] = v;
-        tempData.data[idx + 1] = v;
-        tempData.data[idx + 2] = v;
-        tempData.data[idx + 3] = 255;
-    }
-    tempCtx.putImageData(tempData, 0, 0);
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(temp, 0, 0, sw, sh);
-
-    const scaled = ctx.getImageData(0, 0, sw, sh);
-    const scaledGray = toGrayscale(scaled).gray;
-    const binary = otsuThreshold(scaledGray);
-    const inverted = new Uint8ClampedArray(binary.length);
-    for (let i = 0; i < binary.length; i++) inverted[i] = binary[i] ^ 255;
-
-    return [
-        { width: sw, height: sh, gray: binary },
-        { width: sw, height: sh, gray: inverted },
-    ];
-}
-
-function grayToCanvas(grayObj) {
-    const canvas = document.createElement("canvas");
-    canvas.width = grayObj.width;
-    canvas.height = grayObj.height;
-    const ctx = canvas.getContext("2d");
-    const img = ctx.createImageData(grayObj.width, grayObj.height);
-    for (let i = 0; i < grayObj.gray.length; i++) {
-        const v = grayObj.gray[i];
-        const idx = i * 4;
-        img.data[idx] = v;
-        img.data[idx + 1] = v;
-        img.data[idx + 2] = v;
-        img.data[idx + 3] = 255;
-    }
-    ctx.putImageData(img, 0, 0);
-    return canvas;
-}
-
-function scoreOcrCandidate(digits, confidence) {
-    if (!digits || !/^\d+$/.test(digits)) return 0;
-    if (digits.length < 4 || digits.length > 8) return confidence * 0.15;
-    const lengthScore =
-        digits.length === 6 ? 1 : Math.max(0.35, 1 - Math.abs(digits.length - 6) * 0.18);
-    return Math.max(confidence * lengthScore, digits.length >= 5 && digits.length <= 7 ? 0.35 : 0);
-}
-
 async function initTesseract() {
     if (tesseractWorker) return tesseractWorker;
     try {
@@ -308,18 +121,18 @@ async function processFrame() {
             const loc = qr.location;
             const xs = [loc.topLeftCorner.x, loc.topRightCorner.x, loc.bottomRightCorner.x, loc.bottomLeftCorner.x];
             const ys = [loc.topLeftCorner.y, loc.topRightCorner.y, loc.bottomRightCorner.y, loc.bottomLeftCorner.y];
-            const qrLeft = Math.min(...xs);
-            const qrTop = Math.min(...ys);
-            const qrRight = Math.max(...xs);
             const qrBottom = Math.max(...ys);
-            const qrWidth = qrRight - qrLeft;
-            const qrHeight = qrBottom - qrTop;
+            const qrLeft = Math.min(...xs);
+            const qrRight = Math.max(...xs);
 
-            const roi = computeMileageRoi(qrLeft, qrTop, qrWidth, qrHeight, w, h);
+            const roiY1 = Math.min(qrBottom + 10, h - 1);
+            const roiY2 = Math.min(qrBottom + Math.round(h * 0.15), h);
+            const roiX1 = Math.max(qrLeft - 40, 0);
+            const roiX2 = Math.min(qrRight + 40, w);
 
-            if (roi.y2 > roi.y1 && roi.x2 > roi.x1) {
-                const roiData = ctx.getImageData(roi.x1, roi.y1, roi.x2 - roi.x1, roi.y2 - roi.y1);
-                const ocrResult = await runOcr(roiData, { preferServer: true });
+            if (roiY2 > roiY1 && roiX2 > roiX1) {
+                const roi = ctx.getImageData(roiX1, roiY1, roiX2 - roiX1, roiY2 - roiY1);
+                const ocrResult = await runOcr(roi);
                 mileage = ocrResult.mileage;
                 ocrConfidence = ocrResult.confidence;
             }
@@ -349,39 +162,27 @@ async function processFrame() {
     }
 }
 
-async function runOcr(imageData, options = {}) {
-    const { preferServer = false } = options;
-
-    if (preferServer || useServerOcr || !tesseractWorker) {
-        const serverResult = await runServerOcr(imageData);
-        if (serverResult.mileage) return serverResult;
-        if (useServerOcr || !tesseractWorker) return serverResult;
+async function runOcr(imageData) {
+    if (useServerOcr || !tesseractWorker) {
+        return await runServerOcr(imageData);
     }
 
     try {
-        const variants = preprocessForOcr(imageData);
-        let best = { mileage: "", confidence: 0 };
+        const offscreen = document.createElement("canvas");
+        offscreen.width = imageData.width;
+        offscreen.height = imageData.height;
+        offscreen.getContext("2d").putImageData(imageData, 0, 0);
 
-        for (const variant of variants) {
-            const canvas = grayToCanvas(variant);
-            const { data } = await tesseractWorker.recognize(canvas);
-            const digits = (data.text || "").replace(/[^0-9]/g, "");
-            const conf = data.confidence ? data.confidence / 100 : 0;
-            const score = scoreOcrCandidate(digits, conf);
-            if (score > best.confidence || (score === best.confidence && digits.length > best.mileage.length)) {
-                best = { mileage: digits, confidence: digits ? Math.min(0.99, score) : 0 };
-            }
-        }
+        const scaled = document.createElement("canvas");
+        scaled.width = imageData.width * 2;
+        scaled.height = imageData.height * 2;
+        const sctx = scaled.getContext("2d");
+        sctx.drawImage(offscreen, 0, 0, scaled.width, scaled.height);
 
-        if (best.mileage && best.confidence >= 0.55) {
-            return best;
-        }
-
-        const serverResult = await runServerOcr(imageData);
-        if (serverResult.mileage && serverResult.confidence >= best.confidence) {
-            return serverResult;
-        }
-        return best.mileage ? best : serverResult;
+        const { data } = await tesseractWorker.recognize(scaled);
+        const digits = (data.text || "").replace(/[^0-9]/g, "");
+        const conf = data.confidence ? data.confidence / 100 : 0.8;
+        return { mileage: digits, confidence: digits ? Math.min(0.99, conf) : 0 };
     } catch (e) {
         return await runServerOcr(imageData);
     }

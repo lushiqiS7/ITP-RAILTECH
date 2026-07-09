@@ -458,31 +458,31 @@ def api_admin_delete_train():
 def api_scan_ocr():
     """Server-side OCR fallback: accepts base64 image, returns extracted digits."""
     import base64
-    import io
-
-    import cv2
-    import numpy as np
-    from PIL import Image
-
-    from utils.ocr_preprocessing import recognize_digits
-
+    import re
     data = request.get_json() or {}
     image_data = data.get("image", "")
     if not image_data:
         return jsonify({"success": False, "message": "No image provided"}), 400
     try:
+        import numpy as np
+        import cv2
+        import pytesseract
+        from PIL import Image
+        import io
+
         if "," in image_data:
             image_data = image_data.split(",", 1)[1]
         img_bytes = base64.b64decode(image_data)
         img = Image.open(io.BytesIO(img_bytes))
         frame = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
-        result = recognize_digits(frame)
-        return jsonify({
-            "success": True,
-            "mileage": result.mileage,
-            "confidence": result.confidence,
-            "raw": result.raw,
-        })
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = cv2.resize(gray, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        config = r"--oem 3 --psm 7 -c tessedit_char_whitelist=0123456789"
+        text = pytesseract.image_to_string(thresh, config=config).strip()
+        digits = re.sub(r"[^0-9]", "", text)
+        confidence = min(0.99, 0.65 + len(digits) * 0.04) if digits else 0.0
+        return jsonify({"success": True, "mileage": digits, "confidence": confidence, "raw": text})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
 

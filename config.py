@@ -6,10 +6,6 @@ PM_CYCLES = [2000, 13000, 40000, 120000, 360000]
 DUE_SOON_THRESHOLD = 5000
 OCR_CONFIDENCE_THRESHOLD = 0.75
 QR_CONFIDENCE_THRESHOLD = 0.80
-TESSERACT_CMD = os.environ.get(
-    "TESSERACT_CMD",
-    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-)
 
 DATA_DIR = "data"
 TRAINS_FILE = os.path.join(DATA_DIR, "trains.json")
